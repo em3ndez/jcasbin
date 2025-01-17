@@ -16,6 +16,8 @@ package org.casbin.jcasbin.main;
 
 import org.casbin.jcasbin.util.Util;
 import org.junit.Test;
+import java.util.Map;
+import java.util.HashMap;
 
 import static org.casbin.jcasbin.main.TestUtil.testDomainEnforce;
 import static org.casbin.jcasbin.main.TestUtil.testEnforce;
@@ -25,13 +27,15 @@ public class AbacAPIUnitTest {
     public void testEval() {
         Enforcer e = new Enforcer("examples/abac_rule_model.conf", "examples/abac_rule_policy.csv");
         TestEvalRule alice = new TestEvalRule("alice", 18);
+        // rule with attribute not exist in object will return false, then check the following policy of ACL
+        testEnforce(e, alice, "/data0", "read", false);
         testEnforce(e, alice, "/data1", "read", false);
         testEnforce(e, alice, "/data1", "write", false);
         alice.setAge(19);
         testEnforce(e, alice, "/data1", "read", true);
         testEnforce(e, alice, "/data1", "write", false);
         alice.setAge(25);
-        testEnforce(e, alice, "/data1", "read", false);
+        testEnforce(e, alice, "/data1", "read", true);
         testEnforce(e, alice, "/data1", "write", false);
         testEnforce(e, alice, "/data2", "read", false);
         testEnforce(e, alice, "/data2", "write", true);
@@ -51,6 +55,28 @@ public class AbacAPIUnitTest {
         testDomainEnforce(e, "bob", "domain1", "data2", "write", false);
         testDomainEnforce(e, "bob", "domain2", "data2", "read", true);
         testDomainEnforce(e, "bob", "domain2", "data2", "read", true);
+    }
+
+    @Test
+    public void testABACMapRequest() {
+        Enforcer e = new Enforcer("examples/abac_rule_map_model.conf");
+
+        Map<String, Object> data1 = new HashMap<>();
+        data1.put("Name", "data1");
+        data1.put("Owner", "alice");
+
+        Map<String, Object> data2 = new HashMap<>();
+        data2.put("Name", "data2");
+        data2.put("Owner", "bob");
+
+        testEnforce(e, "alice", data1, "read", true);
+        testEnforce(e, "alice", data1, "write", true);
+        testEnforce(e, "alice", data2, "read", false);
+        testEnforce(e, "alice", data2, "write", false);
+        testEnforce(e, "bob", data1, "read", false);
+        testEnforce(e, "bob", data1, "write", false);
+        testEnforce(e, "bob", data2, "read", true);
+        testEnforce(e, "bob", data2, "write", true);
     }
 
     public static class TestEvalRule {

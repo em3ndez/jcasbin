@@ -3,16 +3,30 @@
 [![codebeat badge](https://codebeat.co/badges/c17c9ee1-da42-4db3-8047-9574ad2b23b1)](https://codebeat.co/projects/github-com-casbin-jcasbin-master)
 [![GitHub Actions](https://github.com/casbin/jcasbin/workflows/build/badge.svg)](https://github.com/casbin/jcasbin/actions)
 [![codecov](https://codecov.io/gh/casbin/jcasbin/branch/master/graph/badge.svg?token=pKOEodQ3q9)](https://codecov.io/gh/casbin/jcasbin)
-[![Javadocs](https://www.javadoc.io/badge/org.casbin/jcasbin.svg)](https://www.javadoc.io/doc/org.casbin/jcasbin)
+[![javadoc](https://javadoc.io/badge2/org.casbin/jcasbin/javadoc.svg)](https://javadoc.io/doc/org.casbin/jcasbin)
 [![Maven Central](https://img.shields.io/maven-central/v/org.casbin/jcasbin.svg)](https://mvnrepository.com/artifact/org.casbin/jcasbin/latest)
 [![Release](https://img.shields.io/github/release/casbin/jcasbin.svg)](https://github.com/casbin/jcasbin/releases/latest)
-[![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/casbin/lobby)
+[![Discord](https://img.shields.io/discord/1022748306096537660?logo=discord&label=discord&color=5865F2)](https://discord.gg/S5UjpzGZjN)
+
+<p align="center">
+  <sup>Sponsored by</sup>
+  <br>
+  <a href="https://stytch.com/docs?utm_source=oss-sponsorship&utm_medium=paid_sponsorship&utm_campaign=casbin">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://cdn.casbin.org/img/stytch-white.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://cdn.casbin.org/img/stytch-charcoal.png">
+      <img src="https://cdn.casbin.org/img/stytch-charcoal.png" width="275">
+    </picture>
+  </a><br/>
+  <a href="https://stytch.com/docs?utm_source=oss-sponsorship&utm_medium=paid_sponsorship&utm_campaign=casbin"><b>Build auth with fraud prevention, faster.</b><br/> Try Stytch for API-first authentication, user & org management, multi-tenant SSO, MFA, device fingerprinting, and more.</a>
+  <br>
+</p>
 
 💖 [**Looking for an open-source identity and access management solution like Okta, Auth0, Keycloak ? Learn more about: Casdoor**](https://casdoor.org/)
 
 <a href="https://casdoor.org/"><img src="https://user-images.githubusercontent.com/3787410/147868267-6ac74908-5654-4f9c-ac79-8852af9ff925.png" alt="casdoor" style="width: 50%; height: 50%"/></a>
 
-**News**: still worry about how to write the correct jCasbin policy? `Casbin online editor` is coming to help! Try it at: http://casbin.org/editor/
+**News**: still worry about how to write the correct jCasbin policy? `Casbin online editor` is coming to help! Try it at: https://casbin.org/editor/
 
 ![casbin Logo](casbin-logo.png)
 
@@ -21,12 +35,12 @@ jCasbin is a powerful and efficient open-source access control library for Java 
 ## All the languages supported by Casbin:
 
 | [![golang](https://casbin.org/img/langs/golang.png)](https://github.com/casbin/casbin) | [![java](https://casbin.org/img/langs/java.png)](https://github.com/casbin/jcasbin) | [![nodejs](https://casbin.org/img/langs/nodejs.png)](https://github.com/casbin/node-casbin) | [![php](https://casbin.org/img/langs/php.png)](https://github.com/php-casbin/php-casbin) |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+|----------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
 | [Casbin](https://github.com/casbin/casbin)                                             | [jCasbin](https://github.com/casbin/jcasbin)                                        | [node-Casbin](https://github.com/casbin/node-casbin)                                        | [PHP-Casbin](https://github.com/php-casbin/php-casbin)                                   |
 | production-ready                                                                       | production-ready                                                                    | production-ready                                                                            | production-ready                                                                         |
 
 | [![python](https://casbin.org/img/langs/python.png)](https://github.com/casbin/pycasbin) | [![dotnet](https://casbin.org/img/langs/dotnet.png)](https://github.com/casbin-net/Casbin.NET) | [![c++](https://casbin.org/img/langs/cpp.png)](https://github.com/casbin/casbin-cpp) | [![rust](https://casbin.org/img/langs/rust.png)](https://github.com/casbin/casbin-rs) |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+|------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | [PyCasbin](https://github.com/casbin/pycasbin)                                           | [Casbin.NET](https://github.com/casbin-net/Casbin.NET)                                         | [Casbin-CPP](https://github.com/casbin/casbin-cpp)                                   | [Casbin-RS](https://github.com/casbin/casbin-rs)                                      |
 | production-ready                                                                         | production-ready                                                                               | beta-test                                                                            | production-ready                                                                      |
 
@@ -105,7 +119,7 @@ What jCasbin does:
 1. enforce the policy in the classic `{subject, object, action}` form or a customized form as you defined, both allow and deny authorizations are supported.
 2. handle the storage of the access control model and its policy.
 3. manage the role-user mappings and role-role mappings (aka role hierarchy in RBAC).
-4. support built-in superuser like `root` or `administrator`. A superuser can do anything without explict permissions.
+4. support built-in superuser like `root` or `administrator`. A superuser can do anything without explicit permissions.
 5. multiple built-in operators to support the rule matching. For example, `keyMatch` can map a resource key `/foo/bar` to the pattern `/foo*`.
 
 What jCasbin does NOT do:
@@ -131,7 +145,7 @@ https://casbin.org/docs/overview
 
 ## Online editor
 
-You can also use the online editor (http://casbin.org/editor/) to write your jCasbin model and policy in your web browser. It provides functionality such as `syntax highlighting` and `code completion`, just like an IDE for a programming language.
+You can also use the online editor (https://casbin.org/editor/) to write your jCasbin model and policy in your web browser. It provides functionality such as `syntax highlighting` and `code completion`, just like an IDE for a programming language.
 
 ## Tutorials
 

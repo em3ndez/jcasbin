@@ -21,13 +21,72 @@ import org.junit.Test;
 
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 import static java.util.Arrays.asList;
 import static org.casbin.jcasbin.main.CoreEnforcer.newModel;
 import static org.casbin.jcasbin.main.TestUtil.*;
 import static org.casbin.jcasbin.main.TestUtil.testEnforceEx;
+import static org.junit.Assert.assertEquals;
 
 public class SyncedEnforcerUnitTest {
+
+    public static void testEnforceSync(SyncedEnforcer e, String sub, Object obj, String act, boolean res) {
+        assertEquals(res, e.enforce(sub, obj, act));
+    }
+
+    @Test
+    public void testSync(){
+        SyncedEnforcer e = new SyncedEnforcer("examples/basic_model.conf", "examples/basic_policy.csv");
+        // Start reloading the policy every 200 ms.
+        e.startAutoLoadPolicy(TimeUnit.MILLISECONDS.toMillis(200));
+
+        testEnforceSync(e, "alice", "data1", "read", true);
+        testEnforceSync(e, "alice", "data1", "write", false);
+        testEnforceSync(e, "alice", "data2", "read", false);
+        testEnforceSync(e, "alice", "data2", "write", false);
+        testEnforceSync(e, "bob", "data1", "read", false);
+        testEnforceSync(e, "bob", "data1", "write", false);
+        testEnforceSync(e, "bob", "data2", "read", false);
+        testEnforceSync(e, "bob", "data2", "write", true);
+
+        // Simulate a policy change
+        e.clearPolicy();
+        testEnforceSync(e, "bob", "data2", "write", false);
+
+        // Wait for at least one sync
+        try {
+            TimeUnit.MILLISECONDS.sleep(300);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt(); // restore interrupted status
+        }
+
+        testEnforceSync(e, "bob", "data2", "write", true);
+
+        // Stop the reloading policy periodically.
+        e.stopAutoLoadPolicy();
+    }
+
+    @Test
+    public void testStopAutoLoadPolicy(){
+        SyncedEnforcer e = new SyncedEnforcer("examples/basic_model.conf", "examples/basic_policy.csv");
+        e.startAutoLoadPolicy(TimeUnit.MILLISECONDS.toMillis(5));
+
+        if (!e.isAutoLoadingRunning()){
+            System.err.println("auto load is not running");
+        }
+        e.stopAutoLoadPolicy();
+        // Need a moment, to exit goroutine
+        try {
+            TimeUnit.MILLISECONDS.sleep(10);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+        if (e.isAutoLoadingRunning()) {
+            System.err.println("auto load is still running");
+        }
+    }
+
     @Test
     public void testKeyMatchModelInMemory() {
         Model m = newModel();
@@ -335,22 +394,23 @@ public class SyncedEnforcerUnitTest {
         testEnforce(e, "bob", "data2", "write", true);
 
         e.enableAutoSave(true);
-        // Because AutoSave is enabled, the policy change not only affects the policy in Casbin enforcer,
-        // but also affects the policy in the storage.
-        e.removePolicy("alice", "data1", "read");
-
-        // However, the file adapter doesn't implement the AutoSave feature, so enabling it has no effect at all here.
-
+        testEnforce(e, "bob", "data2", "write", true);
+        e.removePolicy("bob", "data2", "write");
+        // Affects the policy in the memory
+        testEnforce(e, "bob", "data2", "write", false);
+        // Affects the policy in the adapter
         // Reload the policy from the storage to see the effect.
         e.loadPolicy();
-        testEnforce(e, "alice", "data1", "read", true); // Will not be false here.
+        testEnforce(e, "alice", "data1", "read", true);
         testEnforce(e, "alice", "data1", "write", false);
         testEnforce(e, "alice", "data2", "read", false);
         testEnforce(e, "alice", "data2", "write", false);
         testEnforce(e, "bob", "data1", "read", false);
         testEnforce(e, "bob", "data1", "write", false);
         testEnforce(e, "bob", "data2", "read", false);
-        testEnforce(e, "bob", "data2", "write", true);
+        testEnforce(e, "bob", "data2", "write", false);
+        // prevent previous operations from affecting the CSV file, add the remove policy
+        e.addPolicy("bob", "data2", "write");
     }
 
     @Test

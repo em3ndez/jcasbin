@@ -14,6 +14,9 @@
 
 package org.casbin.jcasbin.main;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.googlecode.aviator.AviatorEvaluator;
 import com.googlecode.aviator.AviatorEvaluatorInstance;
 import com.googlecode.aviator.Expression;
@@ -29,14 +32,15 @@ import org.casbin.jcasbin.model.Assertion;
 import org.casbin.jcasbin.model.FunctionMap;
 import org.casbin.jcasbin.model.Model;
 import org.casbin.jcasbin.persist.*;
-import org.casbin.jcasbin.rbac.DomainManager;
-import org.casbin.jcasbin.rbac.RoleManager;
+import org.casbin.jcasbin.persist.file_adapter.FileAdapter;
+import org.casbin.jcasbin.rbac.*;
 import org.casbin.jcasbin.util.BuiltInFunctions;
 import org.casbin.jcasbin.util.EnforceContext;
 import org.casbin.jcasbin.util.Util;
 
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Function;
 
 /**
  * CoreEnforcer defines the core functionality of an enforcer.
@@ -51,22 +55,25 @@ public class CoreEnforcer {
     Watcher watcher;
     Dispatcher dispatcher;
     Map<String, RoleManager> rmMap;
+    Map<String, ConditionalRoleManager> condRmMap;
 
     private boolean enabled;
     boolean autoSave;
     boolean autoBuildRoleLinks;
     boolean autoNotifyWatcher = true;
     boolean autoNotifyDispatcher = true;
+    boolean acceptJsonRequest = false;
 
     private AviatorEvaluatorInstance aviatorEval;
 
     void initialize() {
         rmMap = new HashMap<>();
+        condRmMap = new HashMap<>();
         eft = new DefaultEffector();
         watcher = null;
 
         enabled = true;
-        autoSave = true;
+        autoSave = adapter instanceof FileAdapter ? false : true;
         autoBuildRoleLinks = true;
         dispatcher = null;
         aviatorEval = AviatorEvaluator.newInstance();
@@ -147,6 +154,24 @@ public class CoreEnforcer {
     public void setModel(Model model) {
         this.model = model;
         fm = FunctionMap.loadFunctionMap();
+    }
+
+    /**
+     * set the aviator evaluator
+     *
+     * @param evaluator aviator evaluator
+     */
+    public void setAviatorEvaluator(AviatorEvaluatorInstance evaluator) {
+        this.aviatorEval = Objects.requireNonNull(evaluator, "The aviator evaluator cannot be null.");
+    }
+
+    /**
+     * gets the current Aviator Evaluator instance
+     *
+     * @return Aviator Evaluator instance of enforcer
+     */
+    public AviatorEvaluatorInstance getAviatorEval() {
+        return aviatorEval;
     }
 
     /**
@@ -264,6 +289,7 @@ public class CoreEnforcer {
         }
         if (autoBuildRoleLinks) {
             buildRoleLinks();
+            buildConditionalRoleLinks();
         }
     }
 
@@ -294,6 +320,7 @@ public class CoreEnforcer {
         }
         if (autoBuildRoleLinks) {
             buildRoleLinks();
+            buildConditionalRoleLinks();
         }
     }
 
@@ -349,9 +376,45 @@ public class CoreEnforcer {
         for (String ptype : model.model.get("g").keySet()) {
             if (rmMap.containsKey(ptype)) {
                 rmMap.get(ptype).clear();
-            } else {
-                rmMap.put(ptype, new DomainManager(10));
+                continue;
             }
+            Assertion assertion = model.model.get("g").get(ptype);
+            int token_length = (assertion.tokens != null ? assertion.tokens.length : 0);
+            int paramsToken_length = (assertion.paramsTokens != null ? assertion.paramsTokens.length : 0);
+            if (token_length <= 2 && paramsToken_length == 0) {
+                assertion.rm = new DomainManager(10);
+                rmMap.put(ptype, assertion.rm);
+            }
+            if (token_length <= 2 && paramsToken_length != 0) {
+                assertion.condRM =new ConditionalRoleManager(10);
+                condRmMap.put(ptype, assertion.condRM);
+                rmMap.put(ptype, assertion.condRM);
+            }
+            if (token_length > 2) {
+                if (paramsToken_length == 0) {
+                    assertion.rm = new DomainManager(10);
+                    rmMap.put(ptype, assertion.rm);
+                } else {
+                    assertion.condRM = new ConditionalRoleManager(10);
+                    condRmMap.put(ptype, assertion.condRM);
+                    rmMap.put(ptype, assertion.condRM);
+                }
+                String matchFun = "keyMatch(r_dom, p_dom)";
+                if (model.model.get("m").get("m").value.contains(matchFun)) {
+                    addNamedDomainMatchingFunc(ptype, "g", BuiltInFunctions::keyMatch);
+                }
+            }
+        }
+    }
+
+    /**
+     * add or update the DomainManager object in rmMap and associate it with a specific domain matching function
+     */
+    private void addOrUpdateDomainManagerMatching(String ptype) {
+        rmMap.put(ptype, new DomainManager(10));
+        String matchFun = "keyMatch(r_dom, p_dom)";
+        if (model.model.get("m").get("m").value.contains(matchFun)) {
+            addNamedDomainMatchingFunc(ptype, "g", BuiltInFunctions::keyMatch);
         }
     }
 
@@ -375,7 +438,9 @@ public class CoreEnforcer {
         }
 
         for (String ptype : model.model.get("g").keySet()) {
-            rmMap.get(ptype).clear();
+            if (rmMap.get(ptype) != null) {
+                rmMap.get(ptype).clear();
+            }
         }
     }
 
@@ -419,14 +484,34 @@ public class CoreEnforcer {
     }
 
     /**
+     * EnableAcceptJsonRequest controls whether to accept json as a request parameter
+     *
+     * @param acceptJsonRequest a boolean that indicates whether JSON requests are accepted.
+     */
+    public void enableAcceptJsonRequest(boolean acceptJsonRequest) {
+        this.acceptJsonRequest = acceptJsonRequest;
+    }
+
+    /**
      * buildRoleLinks manually rebuild the
      * role inheritance relations.
      */
     public void buildRoleLinks() {
-        for (RoleManager rm : rmMap.values()) {
-            rm.clear();
+        if (!rmMap.isEmpty()) {
+            for (RoleManager rm : rmMap.values()) {
+                rm.clear();
+            }
+            model.buildRoleLinks(rmMap);
         }
-        model.buildRoleLinks(rmMap);
+    }
+
+    public void buildConditionalRoleLinks(){
+        if (!condRmMap.isEmpty()) {
+            for (ConditionalRoleManager condRm : condRmMap.values()) {
+                condRm.clear();
+            }
+            model.buildConditionalRoleLinks(condRmMap);
+        }
     }
 
     /**
@@ -440,7 +525,7 @@ public class CoreEnforcer {
      */
     private EnforceResult enforce(String matcher, Object... rvals) {
         if (!enabled) {
-            return new EnforceResult(true, new ArrayList<>(Collections.singletonList("The enforcer is not enable, allow all request")));
+            return new EnforceResult(true, new ArrayList<>(Collections.singletonList("The enforcer is not enabled, allow all requests")));
         }
 
         boolean compileCached = true;
@@ -456,8 +541,17 @@ public class CoreEnforcer {
                 Assertion ast = entry.getValue();
 
                 RoleManager rm = ast.rm;
-                AviatorFunction aviatorFunction = BuiltInFunctions.GenerateGFunctionClass.generateGFunction(key, rm);
-                gFunctions.put(key, aviatorFunction);
+                if (rm != null){
+                    AviatorFunction aviatorFunction = BuiltInFunctions.GenerateGFunctionClass.generateGFunction(key, rm);
+                    gFunctions.put(key, aviatorFunction);
+                }
+
+                ConditionalRoleManager condRM = ast.condRM;
+                if (condRM != null){
+                    AviatorFunction aviatorFunction = BuiltInFunctions.GenerateConditionalGFunctionClass.generateConditionalGFunction(key, condRM);
+                    gFunctions.put(key, aviatorFunction);
+                }
+
             }
         }
         for (AviatorFunction f : gFunctions.values()) {
@@ -487,6 +581,28 @@ public class CoreEnforcer {
             expString = Util.removeComments(Util.escapeAssertion(matcher));
         }
 
+        // json process
+        if (acceptJsonRequest) {
+            try {
+                List<Object> parsedRvals = new ArrayList<>();
+                ObjectMapper objectMapper = new ObjectMapper();
+
+                for (Object rval : rvals) {
+                    if (rval instanceof String && !((String) rval).isEmpty() && Util.isJsonString((String) rval)) {
+                        String jsonString = (String) rval;
+                        Map<String, Object> mapValue = objectMapper.readValue(jsonString, new TypeReference<Map<String, Object>>() {});
+                        parsedRvals.add(mapValue);
+                    } else {
+                        parsedRvals.add(rval);
+                    }
+                }
+
+                rvals = parsedRvals.toArray();
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+        }
+
         expString = Util.convertInSyntax(expString);
         // Use md5 encryption as cacheKey to prevent expString from being too long
         Expression expression = aviatorEval.compile(Util.md5(expString), expString, compileCached);
@@ -502,29 +618,22 @@ public class CoreEnforcer {
 
         Effect[] policyEffects;
         float[] matcherResults;
-        int policyLen, explainIndex = -1;
-        if ((policyLen = model.model.get("p").get(pType).policy.size()) != 0) {
+        final List<List<String>> policy = model.model.get("p").get(pType).policy;
+        final String[] pTokens = model.model.get("p").get(pType).tokens;
+        final int policyLen = policy.size();
+        int explainIndex = -1;
+
+        if (policyLen != 0 && expString.contains(pType+"_")) {
             policyEffects = new Effect[policyLen];
             matcherResults = new float[policyLen];
 
-            for (int i = 0; i < model.model.get("p").get(pType).policy.size(); i++) {
-                List<String> pvals = model.model.get("p").get(pType).policy.get(i);
-                if (model.model.get("p").get(pType).tokens.length != pvals.size()) {
-                    throw new CasbinMatcherException("invalid request size: expected " + model.model.get("p").get(pType).tokens.length +
-                        ", got " + pvals.size() + ", rvals: " + Arrays.toString(rvals));
-                }
-
-                // Util.logPrint("Policy Rule: " + pvals);
-                // Select the rule based on request size
-                Map<String, Object> parameters = new HashMap<>();
-                getRTokens(parameters, rvals);
-                for (int j = 0; j < model.model.get("p").get(pType).tokens.length; j++) {
-                    String token = model.model.get("p").get(pType).tokens[j];
-                    parameters.put(token, pvals.get(j));
-                }
+            for (int i = 0; i < policy.size(); i++) {
+                List<String> pvals = policy.get(i);
+                Map<String, Object> parameters = new HashMap<>(rvals.length + pTokens.length);
+                getPTokens(parameters, pType, pvals, pTokens);
+                getRTokens(parameters, rType, rvals);
 
                 Object result = expression.execute(parameters);
-                // Util.logPrint("Result: " + result);
 
                 if (result instanceof Boolean) {
                     if (!((boolean) result)) {
@@ -562,7 +671,6 @@ public class CoreEnforcer {
                 if (streamEffector != null) {
                     boolean done = streamEffector.push(policyEffects[i], i, policyLen);
                     if (done) {
-                        explainIndex = i;
                         break;
                     }
                 } else {
@@ -571,22 +679,22 @@ public class CoreEnforcer {
                     }
                 }
             }
+            explainIndex = streamEffector.current().getExplainIndex();
         } else {
             policyEffects = new Effect[1];
             matcherResults = new float[1];
 
-            Map<String, Object> parameters = new HashMap<>();
-            for (int j = 0; j < model.model.get("r").get(rType).tokens.length; j++) {
-                String token = model.model.get("r").get(rType).tokens[j];
-                parameters.put(token, rvals[j]);
+            String[] rTokens = model.model.get("r").get(rType).tokens;
+            Map<String, Object> parameters = new HashMap<>(rTokens.length + pTokens.length);
+
+            for (int j = 0; j < rTokens.length; j++) {
+                parameters.put(rTokens[j], rvals[j]);
             }
-            for (int j = 0; j < model.model.get("p").get(pType).tokens.length; j++) {
-                String token = model.model.get("p").get(pType).tokens[j];
+            for (String token : pTokens) {
                 parameters.put(token, "");
             }
 
             Object result = expression.execute(parameters);
-            // Util.logPrint("Result: " + result);
 
             if (streamEffector != null) {
                 if ((boolean) result) {
@@ -613,7 +721,7 @@ public class CoreEnforcer {
 
         List<String> explain = new ArrayList<>();
         if (explainIndex != -1) {
-            explain.addAll(model.model.get("p").get(pType).policy.get(explainIndex));
+            explain.addAll(policy.get(explainIndex));
         }
 
         Util.logEnforce(rvals, result, explain);
@@ -674,15 +782,20 @@ public class CoreEnforcer {
 
     /**
      * addNamedMatchingFunc add MatchingFunc by ptype RoleManager
+     *
+     * @param ptype the type of the role manager.
+     * @param name  the name of the matching function to be added.
+     * @param fn    the matching function.
+     * @return whether the matching function was successfully added.
      */
     public boolean addNamedMatchingFunc(String ptype, String name, BiPredicate<String, String> fn) {
         if (rmMap.containsKey(ptype)) {
             DomainManager rm = (DomainManager) rmMap.get(ptype);
             rm.addMatchingFunc(name, fn);
-            clearRmMap();
-            if (autoBuildRoleLinks) {
-                buildRoleLinks();
-            }
+//            clearRmMap();
+//            if (autoBuildRoleLinks) {
+//                buildRoleLinks();
+//            }
             return true;
         }
         return false;
@@ -690,30 +803,136 @@ public class CoreEnforcer {
 
     /**
      * addNamedMatchingFunc add MatchingFunc by ptype RoleManager
+     *
+     * @param ptype the type of the role manager.
+     * @param name  the name of the matching function to be added.
+     * @param fn    the domain matching function.
+     * @return whether the matching function was successfully added.
      */
     public boolean addNamedDomainMatchingFunc(String ptype, String name, BiPredicate<String, String> fn) {
         if (rmMap.containsKey(ptype)) {
             DomainManager rm = (DomainManager) rmMap.get(ptype);
             rm.addDomainMatchingFunc(name, fn);
-            clearRmMap();
-            if (autoBuildRoleLinks) {
-                buildRoleLinks();
-            }
+//            clearRmMap();
+//            if (autoBuildRoleLinks) {
+//                buildRoleLinks();
+//            }
             return true;
         }
         return false;
     }
 
-    private void getRTokens(Map<String, Object> parameters, Object... rvals) {
-        for (String rKey : model.model.get("r").keySet()) {
-            if (!(rvals.length == model.model.get("r").get(rKey).tokens.length)) {
-                continue;
-            }
-            for (int j = 0; j < model.model.get("r").get(rKey).tokens.length; j++) {
-                String token = model.model.get("r").get(rKey).tokens[j];
-                parameters.put(token, rvals[j]);
-            }
+    /**
+     * addNamedLinkConditionFunc Add condition function fn for Link userName-&gt;roleName,
+     * when fn returns true, Link is valid, otherwise invalid
+     *
+     * @param ptype the type of the role manager.
+     * @param user  the username for which the link condition is being added.
+     * @param role  the role associated with the user for which the condition is evaluated.
+     * @param fn    a function that takes an array of parameters (e.g., [user, role]) and returns a Boolean indicating the validity of the link.
+     * @return whether the Link is valid.
+     */
+    public boolean addNamedLinkConditionFunc(String ptype, String user, String role, Function<String[], Boolean> fn){
+        if (condRmMap.containsKey(ptype)){
+            ConditionalRoleManager condRm = condRmMap.get(ptype);
+            condRm.addLinkConditionFunc(user, role, fn);
+            return true;
+        }
+        return false;
+    }
 
+    /**
+     * addNamedDomainLinkConditionFunc Add condition function fn for Link userName-&gt; {roleName, domain},
+     * when fn returns true, Link is valid, otherwise invalid
+     *
+     * @param ptype  the type of the conditional role manager.
+     * @param user   the username for which the link condition is being added.
+     * @param role   the role associated with the user for which the condition is evaluated.
+     * @param domain the domain associated with the role.
+     * @param fn     a function that takes an array of parameters (e.g., [user, role, domain]) and returns a Boolean indicating the validity of the link.
+     * @return whether the Link is valid.
+     */
+    public boolean addNamedDomainLinkConditionFunc(String ptype, String user, String role, String domain, Function<String[], Boolean> fn) {
+        if (condRmMap.containsKey(ptype)){
+            ConditionalRoleManager condRm = condRmMap.get(ptype);
+            condRm.addDomainLinkConditionFunc(user, role, domain, fn);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * setNamedLinkConditionFuncParams Sets the parameters of the condition function fn for Link userName-&gt;roleName
+     *
+     * @param ptype  the type of the conditional role manager.
+     * @param user   the username for which the link condition parameters are being set.
+     * @param role   the role associated with the user for which the parameters are being configured.
+     * @param params an array of parameters to be passed to the condition function.
+     * @return whether the Link is valid.
+     */
+    public boolean setNamedLinkConditionFuncParams(String ptype, String user, String role, String... params){
+        if (condRmMap.containsKey(ptype)){
+            ConditionalRoleManager condRm = condRmMap.get(ptype);
+            condRm.setLinkConditionFuncParams(user, role, params);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * setNamedDomainLinkConditionFuncParams Sets the parameters of the condition function fn
+     * for Link userName-&gt;{roleName, domain}
+     *
+     * @param ptype  the type of the conditional role manager.
+     * @param user   the username for which the link condition parameters are being set.
+     * @param role   the role associated with the user for which the parameters are being configured.
+     * @param domain the domain associated with the role and user.
+     * @param params an array of parameters to be passed to the condition function, allowing customization of the condition logic.
+     * @return whether the parameters were successfully set.
+     */
+    public boolean setNamedDomainLinkConditionFuncParams(String ptype, String user, String role, String domain, String... params){
+        if (condRmMap.containsKey(ptype)){
+            ConditionalRoleManager condRm = condRmMap.get(ptype);
+            condRm.setDomainLinkConditionFuncParams(user, role, domain, params);
+            return true;
+        }
+        return false;
+    }
+
+    /***
+     * getRTokens Retrieves request tokens and populates them into the provided parameters map.
+     *
+     * @param parameters a map to store the request tokens and their corresponding values.
+     * @param rType      the type of the request for which tokens are being retrieved, used to access the appropriate model.
+     * @param rvals      the request needs to be mediated, usually an array
+     *                   of strings, can be class instances if ABAC is used.
+     */
+    private void getRTokens(Map<String, Object> parameters, String rType, Object... rvals) {
+        String[] requestTokens = model.model.get("r").get(rType).tokens;
+        if(requestTokens.length != rvals.length) {
+            throw new CasbinMatcherException("invalid request size: expected " + requestTokens.length +
+                ", got " + rvals.length + ", rvals: " + Arrays.toString(rvals));
+        }
+        for(int i = 0; i < requestTokens.length; i++) {
+            parameters.put(requestTokens[i], rvals[i]);
+        }
+    }
+
+    /***
+     * getPTokens Retrieves policy tokens and populates them into the provided parameters map.
+     *
+     * @param parameters a map to store the policy tokens and their corresponding values.
+     * @param pType the type of the policy for which tokens are being retrieved, used for context.
+     * @param pvals a list of values corresponding to the policy tokens.
+     * @param pTokens an array of tokens associated with the policy.
+     */
+    private void getPTokens(Map<String, Object> parameters, String pType, List<String> pvals, String[] pTokens) {
+        if (pTokens.length != pvals.size()) {
+            throw new CasbinMatcherException("invalid policy size: expected " + pTokens.length +
+                ", got " + pvals.size() + ", pvals: " + pvals);
+        }
+        for (int i = 0; i < pTokens.length; i++) {
+            parameters.put(pTokens[i], pvals.get(i));
         }
     }
 
@@ -727,7 +946,7 @@ public class CoreEnforcer {
             .flatMap(stringMapEntry -> stringMapEntry.getValue().entrySet().stream())
             .filter(stringAssertionEntry -> stringAssertionEntry.getKey().equals(section))
             .findFirst().orElseThrow(
-                () -> new CasbinMatcherException("Could not find " + section + " definition in model"))
+                () -> new CasbinMatcherException("Could not find " + section + " definition in model."))
             .getValue().tokens.length;
 
         if (rvals.length != expectedParamSize) {

@@ -14,22 +14,22 @@
 
 package org.casbin.jcasbin.main;
 
-import com.googlecode.aviator.AviatorEvaluator;
-import com.googlecode.aviator.Expression;
 import org.casbin.jcasbin.model.Model;
 import org.casbin.jcasbin.persist.Adapter;
 import org.casbin.jcasbin.persist.file_adapter.FileAdapter;
+import org.casbin.jcasbin.util.BuiltInFunctions;
 import org.casbin.jcasbin.util.EnforceContext;
 import org.casbin.jcasbin.util.Util;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.HashMap;
+import java.nio.file.Files;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 import static java.util.Arrays.asList;
 import static org.casbin.jcasbin.main.CoreEnforcer.newModel;
@@ -222,15 +222,21 @@ public class EnforcerUnitTest {
     }
 
     @Test
+    public void testRBACModelInDomain() {
+        Enforcer e = new Enforcer("examples/keymatch_with_rbac_in_domain.conf", "examples/keymatch_with_rbac_in_domain.csv");
+        testDomainEnforce(e, "Username==test2", "engines/engine1", "*", "attach", true);
+    }
+
+    @Test
     public void testInOp() {
         Enforcer e = new Enforcer("examples/in_op_sytanx.conf", "examples/in_op_sytanx.csv");
 
         TestSub sub = new TestSub("alice");
         TestSub sub2 = new TestSub("alice2");
-        TestObj obj = new TestObj(new String[]{"alice","bob"});
+        TestObj obj = new TestObj(new String[]{"alice", "bob"});
 
-        assertTrue(e.enforce(sub,obj));
-        assertFalse(e.enforce(sub2,obj));
+        assertTrue(e.enforce(sub, obj));
+        assertFalse(e.enforce(sub2, obj));
     }
 
     @Test
@@ -356,22 +362,23 @@ public class EnforcerUnitTest {
         testEnforce(e, "bob", "data2", "write", true);
 
         e.enableAutoSave(true);
-        // Because AutoSave is enabled, the policy change not only affects the policy in Casbin enforcer,
-        // but also affects the policy in the storage.
-        e.removePolicy("alice", "data1", "read");
-
-        // However, the file adapter doesn't implement the AutoSave feature, so enabling it has no effect at all here.
-
+        testEnforce(e, "bob", "data2", "write", true);
+        e.removePolicy("bob", "data2", "write");
+        // Affects the policy in the memory
+        testEnforce(e, "bob", "data2", "write", false);
+        // Affects the policy in the adapter
         // Reload the policy from the storage to see the effect.
         e.loadPolicy();
-        testEnforce(e, "alice", "data1", "read", true); // Will not be false here.
+        testEnforce(e, "alice", "data1", "read", true);
         testEnforce(e, "alice", "data1", "write", false);
         testEnforce(e, "alice", "data2", "read", false);
         testEnforce(e, "alice", "data2", "write", false);
         testEnforce(e, "bob", "data1", "read", false);
         testEnforce(e, "bob", "data1", "write", false);
         testEnforce(e, "bob", "data2", "read", false);
-        testEnforce(e, "bob", "data2", "write", true);
+        testEnforce(e, "bob", "data2", "write", false);
+        // prevent previous operations from affecting the CSV file, add the remove policy
+        e.addPolicy("bob", "data2", "write");
     }
 
     @Test
@@ -387,6 +394,66 @@ public class EnforcerUnitTest {
         testEnforce(e, "bob", "data1", "write", false);
         testEnforce(e, "bob", "data2", "read", false);
         testEnforce(e, "bob", "data2", "write", true);
+    }
+
+    @Test
+    public void testFileAdapterAutoSave() {
+        Enforcer e = new Enforcer("examples/basic_model.conf", "examples/basic_policy.csv");
+
+        // test addPolicy() autoSave
+        e.enableAutoSave(false);
+        testEnforce(e, "erica", "data3", "read", false);
+        e.addPolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", true);
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", false);
+
+        e.enableAutoSave(true);
+        testEnforce(e, "erica", "data3", "read", false);
+        e.addPolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", true);
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", true);
+
+        // test removePolicy() autoSave
+        e.enableAutoSave(false);
+        e.removePolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", false);
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", true);
+        e.enableAutoSave(true);
+        e.removePolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", false);
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", false);
+
+        // test savePolicy()
+        e.enableAutoSave(false);
+        e.addPolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", true);
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", false);
+        e.addPolicy("erica", "data3", "read");
+        testEnforce(e, "erica", "data3", "read", true);
+        e.savePolicy();
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", true);
+        e.removePolicy("erica", "data3", "read");
+        e.savePolicy();
+        e.loadPolicy();
+        testEnforce(e, "erica", "data3", "read", false);
+
+        // test group policy auto save
+        e = new Enforcer("examples/rbac_model.conf", "examples/rbac_policy.csv");
+        e.enableAutoSave(true);
+        testEnforce(e, "alice", "data2", "read", true);
+        e.removeGroupingPolicy("alice", "data2_admin");
+        testEnforce(e, "alice", "data2", "read", false);
+        e.loadPolicy();
+        testEnforce(e, "alice", "data2", "read", false);
+        e.addGroupingPolicy("alice", "data2_admin");
+        e.loadPolicy();
+        testEnforce(e, "alice", "data2", "read", true);
     }
 
     @Test
@@ -499,7 +566,7 @@ public class EnforcerUnitTest {
     }
 
     @Test
-    public void testEnforceParamCheck(){
+    public void testEnforceParamCheck() {
         Enforcer e = new Enforcer("examples/rbac_model.conf");
         assertTrue(e.validateEnforce("user501", "data9", "read", "too many params")); //warn only
         assertFalse(e.validateEnforce("data9", "read"));//throw error
@@ -512,7 +579,7 @@ public class EnforcerUnitTest {
         String obj = "data1";
         Set<String> actions = e.getPermittedActions(sub, obj);
         Util.logPrint(sub + " has permissions to access " + obj + " with following actions:");
-        for (String action :actions) {
+        for (String action : actions) {
             Util.logPrint(action); //alice should have read-only access to data1
         }
 
@@ -520,7 +587,7 @@ public class EnforcerUnitTest {
 
         actions = e.getPermittedActions(sub, obj);
         Util.logPrint(sub + " has permissions to access " + obj + " with following actions:");
-        for (String action :actions) {
+        for (String action : actions) {
             Util.logPrint(action); //alice should have read and write access to data2
         }
 
@@ -529,7 +596,7 @@ public class EnforcerUnitTest {
         actions = e.getPermittedActions(sub, data1);
 
         Util.logPrint(sub + " has permissions to access " + data1.name + " with following actions:");
-        for (String action :actions) {
+        for (String action : actions) {
             // The result shows that alice should have no access to data1,
             // because no action defines.
             // This method has no meaning for ABAC model,
@@ -560,6 +627,7 @@ public class EnforcerUnitTest {
         testEnforce(e, "data2_allow_group", "data2", "write", true);
 
         // add a higher priority policy
+        e.enableAutoSave(false);
         e.addPolicy("bob", "data2", "write", "deny", "1");
 
         testEnforce(e, "alice", "data1", "write", true);
@@ -604,6 +672,22 @@ public class EnforcerUnitTest {
     }
 
     @Test
+    public void testDomainBatchEnforce() {
+        Enforcer e = new Enforcer("examples/rbac_with_domains_model.conf", "examples/rbac_with_domains_policy.csv");
+
+        List<Boolean> results = asList(true, true, false);
+        List<Boolean> myResults = e.batchEnforce(
+            asList(
+                asList("alice", "domain1", "data1", "read"),
+                asList("alice", "domain1", "data1", "write"),
+                asList("bob", "domain2", "data1", "write")
+            )
+        );
+
+        Assert.assertArrayEquals(myResults.toArray(new Boolean[0]), results.toArray(new Boolean[0]));
+    }
+
+    @Test
     public void testBatchEnforceWithMatcher() {
         Enforcer e = new Enforcer("examples/basic_model.conf", "examples/basic_policy.csv");
 
@@ -627,18 +711,81 @@ public class EnforcerUnitTest {
         testEnforceWithContext(e, enforceContext, new AbacAPIUnitTest.TestEvalRule("alice", 30), "/data1", "read", true);
     }
 
-    public static class TestSub{
+    @Test
+    public void testHasLinkSynchronized() {
+        File testingDir = null;
+        try {
+            testingDir = Files.createTempDirectory("testingDir").toFile();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        File f = null;
+        try {
+            f = File.createTempFile("policies", null, testingDir);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        FileAdapter a = new FileAdapter(f.getAbsolutePath());
+
+        Enforcer e = new Enforcer("examples/haslink_synchronized_model.conf", a);
+
+        e.enableAutoSave(true);
+        e.addNamedMatchingFunc("g", "keyMatch4", BuiltInFunctions::keyMatch4);
+
+        // Add the relationship of gs role
+        String[][] gs = new String[1001][3];
+        gs[0] = new String[]{"admin@alice.co", "temp", "alice"};
+        for (int i = 0; i < 1000; i++) {
+            gs[i + 1] = new String[]{i + "@alice.co", "temp", "alice"};
+        }
+        e.addGroupingPolicies(gs);
+
+        String[][] policy = {{"alice", "/data", "allow"}};
+        e.addPolicies(policy);
+        e.savePolicy();
+
+        int n = 100;
+        CountDownLatch countDownLatch = new CountDownLatch(n);
+
+        for (int i = 0; i < n; i++) {
+            int finalI = i;
+            new Thread(() -> {
+                boolean res = e.enforce("alice", "data");
+                if(!res) {
+                    System.out.println("result failure: " + finalI);
+                }
+                countDownLatch.countDown();
+            }).start();
+        }
+
+        try {
+            countDownLatch.await();
+        } catch (InterruptedException ex) {
+            ex.printStackTrace();
+        }
+
+        System.out.println("Done!");
+    }
+
+    public static class TestSub {
         private String name;
 
         public TestSub(String name) {
             this.name = name;
         }
 
-        public String getName() { return name; }
+        public String getName() {
+            return name;
+        }
 
-        public void setName(String name) { this.name = name; }
+        public void setName(String name) {
+            this.name = name;
+        }
     }
-    public static class TestAdmins{
+
+    public static class TestAdmins {
         private String name;
 
         public TestAdmins(String name) {
@@ -653,7 +800,8 @@ public class EnforcerUnitTest {
             this.name = name;
         }
     }
-    public static class TestObj{
+
+    public static class TestObj {
         private String[] admins;
 
         public TestObj(String[] admins) {

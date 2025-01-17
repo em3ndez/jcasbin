@@ -23,9 +23,9 @@ import java.util.function.BiPredicate;
 public class DefaultRoleManager implements RoleManager {
     private static final String DEFAULT_DOMAIN = "casbin::default";
     Map<String, Role> allRoles;
-    private final int maxHierarchyLevel;
+    final int maxHierarchyLevel;
 
-    private BiPredicate<String, String> matchingFunc;
+    BiPredicate<String, String> matchingFunc;
     private SyncedLRUCache<String, Boolean> matchingFuncCache;
 
     /**
@@ -64,6 +64,7 @@ public class DefaultRoleManager implements RoleManager {
     /**
      * addMatchingFunc support use pattern in g.
      *
+     * @param name the name of the matching function.
      * @param matchingFunc the matching function.
      */
     public void addMatchingFunc(String name, BiPredicate<String, String> matchingFunc) {
@@ -74,6 +75,7 @@ public class DefaultRoleManager implements RoleManager {
     /**
      * addDomainMatchingFunc support use domain pattern in g
      *
+     * @param name the name of the domain matching function.
      * @param domainMatchingFunc the domain matching function.
      */
     public void addDomainMatchingFunc(String name, BiPredicate<String, String> domainMatchingFunc) {
@@ -87,7 +89,7 @@ public class DefaultRoleManager implements RoleManager {
         });
     }
 
-    private boolean match(String str, String pattern) {
+    boolean match(String str, String pattern) {
         String cacheKey =  String.join("$$", str, pattern);
         Boolean matched = this.matchingFuncCache.get(cacheKey);
         if (matched == null) {
@@ -101,7 +103,7 @@ public class DefaultRoleManager implements RoleManager {
         return matched;
     }
 
-    private Role getRole(String name) {
+    Role getRole(String name) {
         Role role = this.allRoles.get(name);
         if (role == null) {
             role = new Role(name);
@@ -125,7 +127,7 @@ public class DefaultRoleManager implements RoleManager {
         return role;
     }
 
-    private void removeRole(String name) {
+    void removeRole(String name) {
         final Role role = this.allRoles.get(name);
         if (role != null) {
             this.allRoles.remove(name);
@@ -176,7 +178,7 @@ public class DefaultRoleManager implements RoleManager {
      * hasLink determines whether role: name1 inherits role: name2. domain is a prefix to the roles.
      */
     @Override
-    public boolean hasLink(String name1, String name2, String... domain) {
+    public synchronized boolean hasLink(String name1, String name2, String... domain) {
         if (name1.equals(name2) || (this.matchingFunc != null && this.matchingFunc.test(name1, name2))) {
             return true;
         }

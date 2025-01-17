@@ -16,12 +16,17 @@ package org.casbin.jcasbin.main;
 
 import com.googlecode.aviator.AviatorEvaluator;
 import com.googlecode.aviator.AviatorEvaluatorInstance;
+import org.casbin.jcasbin.util.BuiltInFunctions;
+import org.casbin.jcasbin.util.Util;
 import org.junit.Test;
+import org.mockito.BDDMockito;
+import org.mockito.MockedStatic;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.casbin.jcasbin.main.TestUtil.*;
+import static org.mockito.ArgumentMatchers.*;
 
 public class BuiltInFunctionsUnitTest {
 
@@ -68,6 +73,8 @@ public class BuiltInFunctionsUnitTest {
         testKeyMatch2("/alice/all", "/:id", false);
 
         testKeyMatch2("/alice/all", "/:/all", false);
+
+        testKeyMatch2("engines/engine1", "*", true);
     }
 
     @Test
@@ -114,15 +121,49 @@ public class BuiltInFunctionsUnitTest {
         testKeyMatch4("/parent/123/child/456", "/parent/{id}/child/{id}/book/{id}", false);
 
         testKeyMatch4("/parent/123/child/123", "/parent/{i/d}/child/{i/d}", false);
+
+        testKeyMatch4("/pipeline/work-order/sit/deploy", "/pipeline/work-order/*/deploy", true);
     }
 
     @Test
     public void testKeyMatch5Func() {
+        testKeyMatch5("/alice_data/hello/123", "/alice_data/{resource}/.*", true);
+
         testKeyMatch5("/parent/child?status=1&type=2", "/parent/child", true);
         testKeyMatch5("/parent?status=1&type=2", "/parent/child", false);
+
         testKeyMatch5("/parent/child/?status=1&type=2", "/parent/child/", true);
         testKeyMatch5("/parent/child/?status=1&type=2", "/parent/child", false);
         testKeyMatch5("/parent/child?status=1&type=2", "/parent/child/", false);
+
+        testKeyMatch5("/foo", "/foo", true);
+        testKeyMatch5("/foo", "/foo*", true);
+        testKeyMatch5("/foo", "/foo/*", false);
+        testKeyMatch5("/foo/bar", "/foo", false);
+        testKeyMatch5("/foo/bar", "/foo*", false);
+        testKeyMatch5("/foo/bar", "/foo/*", true);
+        testKeyMatch5("/foobar", "/foo", false);
+        testKeyMatch5("/foobar", "/foo*", false);
+        testKeyMatch5("/foobar", "/foo/*", false);
+
+        testKeyMatch5("/", "/{resource}", false);
+        testKeyMatch5("/resource1", "/{resource}", true);
+        testKeyMatch5("/myid", "/{id}/using/{resId}", false);
+        testKeyMatch5("/myid/using/myresid", "/{id}/using/{resId}", true);
+
+        testKeyMatch5("/proxy/myid", "/proxy/{id}/*", false);
+        testKeyMatch5("/proxy/myid/", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res/res2", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res/res2/res3", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/", "/proxy/{id}/*", false);
+
+        testKeyMatch5("/proxy/myid?status=1&type=2", "/proxy/{id}/*", false);
+        testKeyMatch5("/proxy/myid/", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res?status=1&type=2", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res/res2?status=1&type=2", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/myid/res/res2/res3?status=1&type=2", "/proxy/{id}/*", true);
+        testKeyMatch5("/proxy/", "/proxy/{id}/*", false);
     }
 
     @Test
@@ -256,4 +297,20 @@ public class BuiltInFunctionsUnitTest {
         testGlobMatch("/prefix/subprefix/foobar", "*/foo*", false);
         testGlobMatch("/prefix/subprefix/foobar", "*/foo/*", false);
     }
+
+    @Test
+    public void should_logged_when_eval_given_errorExpression() {
+        // given
+        AviatorEvaluatorInstance instance = AviatorEvaluator.getInstance();
+        Map<String, Object> env = new HashMap<>();
+
+        try (MockedStatic<Util> utilMocked = BDDMockito.mockStatic(Util.class)) {
+            utilMocked.when(() -> Util.logPrintfWarn(anyString(), anyString())).thenCallRealMethod();
+            // when
+            BuiltInFunctions.eval("error", env, instance);
+            // then
+            utilMocked.verify(() -> Util.logPrintfWarn(eq("Execute 'eval' function error, nested exception is: {}"), any()));
+        }
+    }
+
 }

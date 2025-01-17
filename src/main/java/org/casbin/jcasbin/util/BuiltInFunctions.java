@@ -22,8 +22,11 @@ import com.googlecode.aviator.runtime.type.*;
 import inet.ipaddr.AddressStringException;
 import inet.ipaddr.IPAddress;
 import inet.ipaddr.IPAddressString;
+import org.casbin.jcasbin.rbac.ConditionalRoleManager;
 import org.casbin.jcasbin.rbac.RoleManager;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -34,6 +37,20 @@ public class BuiltInFunctions {
 
     private static final Pattern KEY_MATCH2_PATTERN = Pattern.compile(":[^/]+");
     private static final Pattern KEY_MATCH3_PATTERN = Pattern.compile("\\{[^/]+\\}");
+    private static final Pattern KEY_MATCH5_PATTERN = Pattern.compile("\\{[^/]+\\}");
+
+    /**
+     * validate the variadic string parameter size
+     *
+     * @param args         the expected number of arguments.
+     * @param expectedLen  the variadic string arguments to validate.
+     */
+    public static void validateVariadicStringArgs(int expectedLen, String... args) throws IllegalArgumentException {
+        int length = args!=null?args.length:0;
+        if (length != expectedLen) {
+            throw new IllegalArgumentException(String.format("Expected %d arguments, but got %d", expectedLen, args.length));
+        }
+    }
 
     /**
      * keyMatch determines whether key1 matches the pattern of key2 (similar to RESTful path), key2
@@ -73,8 +90,12 @@ public class BuiltInFunctions {
      */
     public static boolean keyMatch2(String key1, String key2) {
         key2 = key2.replace("/*", "/.*");
-        key2 = "^" + KEY_MATCH2_PATTERN.matcher(key2).replaceAll("[^/]+") + "$";
-        return regexMatch(key1, key2);
+        key2 = KEY_MATCH2_PATTERN.matcher(key2).replaceAll("[^/]+");
+        key2 = key2.replaceAll("\\{([^/]+)\\}", "([^/]+)");
+        if(Objects.equals(key2, "*")) {
+            key2 = "(.*)";
+        }
+        return regexMatch(key1, "^" + key2 + "$");
     }
 
     /**
@@ -116,58 +137,60 @@ public class BuiltInFunctions {
      * @return whether key1 matches key2.
      */
     public static boolean keyMatch4(String key1, String key2) {
-        String regEx = "\\{[^/]+\\}";
-        Pattern p = Pattern.compile(regEx);
-        Matcher m = p.matcher(key2);
+        key2 = key2.replace("/*", "/.*");
 
-        String[] tmp = p.split(key2);
-        List<String> tokens = new ArrayList<>();
-        if (tmp.length > 0) {
-            int count = 0;
-            while (count < tmp.length) {
-                tokens.add(tmp[count]);
-                if (m.find()) {
-                    tokens.add(m.group());
-                }
-                count++;
+        ArrayList<String> tokens = new ArrayList<>();
+
+        Pattern p = Pattern.compile("\\{[^{}]*\\}");
+        Matcher m = p.matcher(key2);
+        StringBuffer sb = new StringBuffer();
+        while(m.find()) {
+            String group = m.group();
+            tokens.add(group);
+            if(group.contains("/")) {
+                group = group.replace("{", "\\{")
+                            .replace("}", "\\}")
+                            .replace("/", "\\/");
+                m.appendReplacement(sb, Matcher.quoteReplacement(group));
+            } else {
+                m.appendReplacement(sb, "([^/]+)");
             }
         }
-        int off = 0;
-        for (String token : tokens) {
-            if (!p.matcher(token).matches()) {
-                while (off < key1.length() && key1.charAt(off) != token.charAt(0)) {
-                    off++;
-                }
-                if (key1.length() - (off + 1) < token.length()) {
-                    return false;
-                }
-                if (!key1.startsWith(token, off)) {
-                    return false;
-                }
-                key1 = key1.replaceFirst(token, ",");
+        m.appendTail(sb);
+        key2 = sb.toString();
+
+        p = Pattern.compile("^" + key2 + "$");
+        m = p.matcher(key1);
+
+        ArrayList<String> matches = new ArrayList<>();
+        if (m.find()) {
+            for (int i = 0; i <=  m.groupCount(); i++) {
+                matches.add(m.group(i));
             }
         }
-        String[] values = key1.split(",");
-        int i = 0;
-        Map<String, String> params = new HashMap<>();
-        for (String token : tokens) {
-            if (p.matcher(token).matches()) {
-                while (i < values.length && "".equals(values[i])) {
-                    i++;
-                }
-                if (i == values.length) {
-                    return false;
-                }
-                if (params.containsKey(token)) {
-                    if (!values[i].equals(params.get(token))) {
-                        return false;
-                    }
-                } else {
-                    params.put(token, values[i]);
-                }
-                i++;
+
+        if(matches.isEmpty()) {
+            return false;
+        }
+
+        matches.remove(0);
+
+        if(tokens.size() != matches.size()) {
+            throw new RuntimeException("KeyMatch4: number of tokens is not equal to number of values");
+        }
+
+        Map<String ,String> values = new HashMap<>();
+
+        for (int key = 0; key < tokens.size(); ++key) {
+            String token = tokens.get(key);
+            if(!values.containsKey(token)) {
+                values.put(token, matches.get(key));
+            }
+            if(!values.get(token).equals(matches.get(key))) {
+                return false;
             }
         }
+
         return true;
     }
 
@@ -175,7 +198,7 @@ public class BuiltInFunctions {
      * KeyMatch5 determines whether key1 matches the pattern of key2 and ignores the parameters in key2.
      *
      * <pre>
-     * For example, "/foo/bar?status=1&type=2" matches "/foo/bar"
+     * For example, "/foo/bar?status=1&amp;type=2" matches "/foo/bar"
      * </pre>
      *
      * @param key1 the first argument.
@@ -184,10 +207,14 @@ public class BuiltInFunctions {
      */
     public static boolean keyMatch5(String key1, String key2) {
         int i = key1.indexOf('?');
-        if (i == -1) {
-            return key1.equals(key2);
+        if (i != -1) {
+            key1 = key1.substring(0,i);
         }
-        return key1.substring(0, i).equals(key2);
+
+        key2 = key2.replace("/*", "/.*");
+        key2 = KEY_MATCH5_PATTERN.matcher(key2).replaceAll("[^/]+");
+
+        return regexMatch(key1, "^" + key2 + "$");
     }
 
     /**
@@ -213,8 +240,9 @@ public class BuiltInFunctions {
     /**
      * KeyGet2 returns value matched pattern.For example, "/resource1" matches "/:resource", if the pathVar == "resource", then "resource1" will be returned.
      *
-     * @param key1 the first argument.
-     * @param key2 the second argument.
+     * @param key1    the first argument.
+     * @param key2    the second argument.
+     * @param pathVar the name of the variable to retrieve from the matched pattern.
      * @return the matched part.
      */
     public static String keyGet2Func(String key1, String key2, String pathVar) {
@@ -391,6 +419,66 @@ public class BuiltInFunctions {
         }
     }
 
+    public static class GenerateConditionalGFunctionClass {
+        // key:name such as g,g2  value:user-role mapping
+        private static Map<String, Map<String, AviatorBoolean>> memorizedMap = new ConcurrentHashMap<>();
+
+        /**
+         * GenerateConditionalGFunction is the factory method of the g(_, _[, _]) function with conditions.
+         *
+         * @param name    the name of the g(_, _) function, can be "g", "g2", ..
+         * @param condRm  the conditional role manager used by the function.
+         * @return the function.
+         */
+        public static AviatorFunction generateConditionalGFunction(String name, ConditionalRoleManager condRm) {
+            memorizedMap.put(name, new ConcurrentHashMap<>());
+
+            return new AbstractVariadicFunction() {
+                @Override
+                public AviatorObject variadicCall(Map<String, Object> env, AviatorObject... args) {
+                    Map<String, AviatorBoolean> memorized = memorizedMap.get(name);
+                    int len = args.length;
+                    if (len < 2) {
+                        return AviatorBoolean.valueOf(false);
+                    }
+                    String name1 = FunctionUtils.getStringValue(args[0], env);
+                    String name2 = FunctionUtils.getStringValue(args[1], env);
+
+                    String key = "";
+                    for (AviatorObject arg : args) {
+                        String name = FunctionUtils.getStringValue(arg, env);
+                        key += ";" + name;
+                    }
+
+                    AviatorBoolean value = memorized.get(key);
+                    if (value != null) {
+                        return value;
+                    }
+
+                    boolean hasLink;
+                    if (condRm == null) {
+                        hasLink = name1.equals(name2);
+                    } else if (len == 2) {
+                        hasLink = condRm.hasLink(name1, name2);
+                    } else if (len == 3) {
+                        String domain = FunctionUtils.getStringValue(args[2], env);
+                        hasLink = condRm.hasLink(name1, name2, domain);
+                    } else {
+                        hasLink = false;
+                    }
+                    value = AviatorBoolean.valueOf(hasLink);
+                    memorized.put(key, value);
+                    return value;
+                }
+
+                @Override
+                public String getName() {
+                    return name;
+                }
+            };
+        }
+    }
+
     /**
      * eval calculates the stringified boolean expression and return its result.
      *
@@ -402,10 +490,74 @@ public class BuiltInFunctions {
     public static boolean eval(String eval, Map<String, Object> env, AviatorEvaluatorInstance aviatorEval) {
         boolean res;
         if (aviatorEval != null) {
-            res = (boolean) aviatorEval.execute(eval, env);
+            try {
+                res = (boolean) aviatorEval.execute(eval, env);
+            } catch (Exception e) {
+                Util.logPrintfWarn("Execute 'eval' function error, nested exception is: {}", e.getMessage());
+                res = false;
+            }
         } else {
             res = (boolean) AviatorEvaluator.execute(eval, env);
         }
         return res;
+    }
+
+    // builtin LinkConditionFunc
+
+    /**
+     * timeMatchFunc is the wrapper for TimeMatch.
+     *
+     * @param args the arguments for the time match function.
+     * @return whether the time matches the pattern.
+     */
+    public static boolean timeMatchFunc(String... args) {
+        try {
+            validateVariadicStringArgs(2, args);
+            return timeMatch(args[0], args[1]);
+        } catch (IllegalArgumentException e) {
+            System.err.println("TimeMatch: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * TimeMatch determines whether the current time is between startTime and endTime.
+     * You can use "_" to indicate that the parameter is ignored
+     *
+     * @param startTime the start time as a string in the format "yyyy-MM-dd HH:mm:ss". Use "_" to ignore the start time.
+     * @param endTime the end time as a string in the format "yyyy-MM-dd HH:mm:ss". Use "_" to ignore the end time.
+     * @return whether the current time is between startTime and endTime
+     */
+    public static boolean timeMatch(String startTime, String endTime) {
+        LocalDateTime now = LocalDateTime.now();
+
+        if (!startTime.equals("_")) {
+            LocalDateTime start;
+            // special process for "0000" year,LocalDateTime range is 1-999999999
+            if (startTime.startsWith("0000")){
+                start = LocalDateTime.MIN;
+            }else {
+                start = LocalDateTime.parse(startTime, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            }
+            if (!now.isAfter(start)) {
+                return false;
+            }
+        }
+
+        if (!endTime.equals("_")) {
+
+            LocalDateTime end;
+            // special process for "0000" year,LocalDateTime range is 1-999999999
+            if (endTime.startsWith("0000")){
+                end = LocalDateTime.MIN;
+            }else {
+                end = LocalDateTime.parse(endTime, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            }
+            if (!now.isBefore(end)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

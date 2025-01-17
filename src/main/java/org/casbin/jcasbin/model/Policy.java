@@ -14,6 +14,7 @@
 
 package org.casbin.jcasbin.model;
 
+import org.casbin.jcasbin.rbac.ConditionalRoleManager;
 import org.casbin.jcasbin.rbac.RoleManager;
 import org.casbin.jcasbin.util.Util;
 
@@ -39,7 +40,9 @@ public class Policy {
                 String ptype = entry.getKey();
                 Assertion ast = entry.getValue();
                 RoleManager rm = rmMap.get(ptype);
-                ast.buildRoleLinks(rm);
+                if (rm != null) {
+                    ast.buildRoleLinks(rm);
+                }
             }
         }
     }
@@ -373,7 +376,7 @@ public class Policy {
     }
 
     public void buildIncrementalRoleLinks(Map<String, RoleManager> rmMap, Model.PolicyOperations op, String sec, String ptype, List<List<String>> rules) {
-        if ("g".equals(sec)) {
+        if ("g".equals(sec) && rmMap.containsKey(ptype)) {
             model.get(sec).get(ptype).buildIncrementalRoleLinks(rmMap.get(ptype), op, rules);
         }
     }
@@ -385,5 +388,39 @@ public class Policy {
             }
         }
         return false;
+    }
+
+    /**
+     * buildIncrementalConditionalRoleLinks provides incremental build the role inheritance relations.
+     *
+     * @param condRmMap a map of conditional role managers used for role link management.
+     * @param op        the operation to perform, such as adding or removing role links.
+     * @param sec       the section of the policy, typically "g" for role inheritance.
+     * @param ptype     the policy type, which specifies the kind of roles being managed.
+     * @param rules     the rules that define the role links to be built.
+     */
+    public void buildIncrementalConditionalRoleLinks(Map<String, ConditionalRoleManager> condRmMap, Model.PolicyOperations op, String sec, String ptype, List<List<String>> rules){
+        if ("g".equals(sec) && condRmMap.containsKey(ptype)) {
+            model.get(sec).get(ptype).buildIncrementalConditionalRoleLinks(condRmMap.get(ptype), op, rules);
+        }
+    }
+
+    /**
+     * buildConditionalRoleLinks initializes the roles in RBAC.
+     *
+     * @param condRmMap a map of conditional role managers that manage the role links and their conditions.
+     */
+    public void buildConditionalRoleLinks(Map<String, ConditionalRoleManager> condRmMap){
+        printPolicy();
+        if (model.containsKey("g")) {
+            for (Map.Entry<String, Assertion> entry : model.get("g").entrySet()) {
+                String ptype = entry.getKey();
+                Assertion ast = entry.getValue();
+                if (condRmMap.get(ptype) != null){
+                    ConditionalRoleManager condRm = condRmMap.get(ptype);
+                    ast.buildConditionalRoleLinks(condRm);
+                }
+            }
+        }
     }
 }

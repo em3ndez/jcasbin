@@ -14,6 +14,9 @@
 
 package org.casbin.jcasbin.main;
 
+import com.googlecode.aviator.AviatorEvaluator;
+import com.googlecode.aviator.AviatorEvaluatorInstance;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.List;
@@ -123,6 +126,15 @@ public class ManagementAPIUnitTest {
 
         e.updateNamedPolicy("p", asList("eve", "data2", "read"), asList("eve", "data4", "read"));
         testGetPolicy(e, asList(asList("eve", "data4", "read")));
+
+        e.addNamedPolicies("p", asList(asList("eve", "data4", "read"), asList("user1", "data1", "read")));
+        testGetPolicy(e, asList(asList("eve", "data4", "read")));
+
+        e.addNamedPoliciesEx("p", asList(asList("eve", "data4", "read"), asList("user1", "data1", "read")));
+        testGetPolicy(e, asList(asList("eve", "data4", "read"), asList("user1", "data1", "read")));
+
+
+
     }
 
     @Test
@@ -203,4 +215,26 @@ public class ManagementAPIUnitTest {
         testGetUsers(e, "data2_admin", asList());
         testGetUsers(e, "data3_admin", asList("eve"));
     }
+
+    @Test
+    public void should_throwsNullPointException_when_setAviatorEvaluator_given_nullInstance() {
+        // given
+        AviatorEvaluatorInstance instance = null;
+        Enforcer enforcer = new Enforcer();
+        // when
+        Assert.assertThrows("The aviator evaluator cannot be null.", NullPointerException.class,
+            () -> enforcer.setAviatorEvaluator(instance));
+    }
+
+    @Test
+    public void should_true_when_setAviatorEvaluator_given_customInstance() {
+        // given
+        AviatorEvaluatorInstance instance = AviatorEvaluator.newInstance();
+        Enforcer enforcer = new Enforcer();
+        // when
+        enforcer.setAviatorEvaluator(instance);
+        // then
+        Assert.assertEquals(instance, enforcer.getAviatorEval());
+    }
+
 }
